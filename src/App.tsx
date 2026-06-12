@@ -609,72 +609,111 @@ export default function App() {
     }
   };
 
- // Voice briefing generator
-const handlePlayBriefing = async () => {
-  if (isPlayingBriefing) {
-    handleStopAudio();
-    return;
-  }
+  // Play MP3/WAV/AAC audio returned as base64 from OpenAI TTS
+  const playEncodedAudio = async (base64Audio: string, mimeType = "audio/mpeg") => {
+    try {
+      handleStopAudio();
 
-  setIsGeneratingBriefing(true);
-  setBriefingError(null);
+      const audio = new Audio(`data:${mimeType};base64,${base64Audio}`);
+      audioRef.current = audio;
 
-  try {
-    // 1. まず、タスクと予定を短い自然な台本にまとめる
-    const scriptResponse = await fetch("/api/briefing-script", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        username,
-        tasks,
-        calendarEvents,
-      }),
-    });
+      audio.onended = () => {
+        if (audioRef.current === audio) {
+          setIsPlayingBriefing(false);
+        }
+      };
 
-    if (!scriptResponse.ok) {
-      throw new Error("音声用の短い台本作成に失敗しました。時間をおいてもう一度お試しください。");
+      audio.onerror = () => {
+        setIsPlayingBriefing(false);
+        setBriefingError("ブラウザでの音声再生時に問題が発生しました。");
+      };
+
+      setIsPlayingBriefing(true);
+      await audio.play();
+    } catch (err) {
+      console.error("Encoded audio playback error:", err);
+      setBriefingError("ブラウザでの音声再生時に問題が発生しました。");
+      setIsPlayingBriefing(false);
+    }
+  };
+
+  const playGeneratedAudio = async (audioBase64: string, mimeType?: string) => {
+    if (mimeType) {
+      await playEncodedAudio(audioBase64, mimeType);
+      return;
     }
 
-    const scriptData = await scriptResponse.json();
-    const compiledText = scriptData.script;
+    // 古いGemini PCM形式にも戻せるように残しておく
+    await playPcmAudio(audioBase64);
+  };
 
-    if (!compiledText) {
-      throw new Error("音声用の台本を取得できませんでした。");
+  // Voice briefing generator
+  const handlePlayBriefing = async () => {
+    if (isPlayingBriefing) {
+      handleStopAudio();
+      return;
     }
 
-    setActiveSpeechText(compiledText);
+    setIsGeneratingBriefing(true);
+    setBriefingError(null);
 
-    // 2. 短く整えた台本だけを音声生成する
-    const response = await fetch("/api/tts", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ 
-        text: compiledText,
-        voice: selectedVoice 
-      }),
-    });
+    try {
+      // 1. まず、タスクと予定をそのまま全部読ませず、短い自然な台本にまとめる
+      const scriptResponse = await fetch("/api/briefing-script", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          username,
+          tasks,
+          calendarEvents,
+        }),
+      });
 
-    if (!response.ok) {
-      throw new Error("音声作成に失敗しました。時間をおいてもう一度お試しください。");
+      if (!scriptResponse.ok) {
+        throw new Error("音声用の短い台本作成に失敗しました。時間をおいてもう一度お試しください。");
+      }
+
+      const scriptData = await scriptResponse.json();
+      const compiledText = scriptData.script;
+
+      if (!compiledText) {
+        throw new Error("音声用の台本を取得できませんでした。");
+      }
+
+      setActiveSpeechText(compiledText);
+
+      // 2. 短く整えた台本だけを音声生成する
+      const response = await fetch("/api/tts", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ 
+          text: compiledText,
+          voice: selectedVoice 
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error("音声作成に失敗しました。時間をおいてもう一度お試しください。");
+      }
+
+      const data = await response.json();
+      if (!data.audioBase64) {
+        throw new Error("音声データの読み込み時に不具合が発生しました。");
+      }
+
+      await playGeneratedAudio(data.audioBase64, data.mimeType);
+    } catch (err: any) {
+      console.error(err);
+      setBriefingError(err.message || "読み上げ準備に失敗しました。");
+    } finally {
+      setIsGeneratingBriefing(false);
     }
+  };
 
-    const data = await response.json();
-    if (!data.audioBase64) {
-      throw new Error("音声データの読み込み時に不具合が発生しました。");
-    }
-
-    await playPcmAudio(data.audioBase64);
-  } catch (err: any) {
-    console.error(err);
-    setBriefingError(err.message || "読み上げ準備に失敗しました。");
-  } finally {
-    setIsGeneratingBriefing(false);
-  }
-};
   // Taikin Timer helper functions
   const handleClockIn = () => {
     setIsClockedIn(true);
@@ -791,7 +830,7 @@ const handlePlayBriefing = async () => {
       }
 
       // Play audio
-      await playPcmAudio(data.audioBase64);
+      await playGeneratedAudio(data.audioBase64, data.mimeType);
     } catch (err: any) {
       console.error(err);
       setBriefingError(err.message || "お疲れ様音声の生成に失敗しました。");
