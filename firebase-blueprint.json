@@ -1,76 +1,229 @@
-{
-  "entities": {
-    "Task": {
-      "title": "Task",
-      "description": "A task created by a user to track their daily activities",
-      "type": "object",
-      "properties": {
-        "id": { "type": "string", "description": "The unique task ID" },
-        "title": { "type": "string", "description": "The title of the task" },
-        "priority": { "type": "string", "enum": ["high", "medium", "low"], "description": "Task priority level" },
-        "estimatedMinutes": { "type": "integer", "description": "Estimated time to complete in minutes" },
-        "category": { "type": "string", "description": "The category/group of the task" },
-        "status": { "type": "string", "enum": ["not_started", "in_progress", "completed"], "description": "Current state of the task" },
-        "createdAt": { "type": "integer", "description": "Timestamp of creation" },
-        "userId": { "type": "string", "description": "The owner's Firebase Authentication UID" }
-      },
-      "required": ["id", "title", "priority", "estimatedMinutes", "category", "status", "createdAt", "userId"]
+import { initializeApp, getApps, getApp } from "firebase/app";
+import { 
+  getFirestore, 
+  collection, 
+  getDocs, 
+  doc, 
+  setDoc, 
+  deleteDoc, 
+  query, 
+  where,
+  getDocFromServer 
+} from "firebase/firestore";
+import firebaseConfig from "../firebase-applet-config.json";
+import { Task, TaikinRecord, CalendarEvent } from "./types";
+import { auth } from "./auth";
+
+const isPlaceholder = firebaseConfig.apiKey === "PLACEHOLDER";
+const app = isPlaceholder 
+  ? null 
+  : (getApps().length > 0 ? getApp() : initializeApp(firebaseConfig));
+
+export const db = app ? getFirestore(app, firebaseConfig.firestoreDatabaseId) : null;
+
+// Error Handling according to firebase-integration guidelines
+export enum OperationType {
+  CREATE = 'create',
+  UPDATE = 'update',
+  DELETE = 'delete',
+  LIST = 'list',
+  GET = 'get',
+  WRITE = 'write',
+}
+
+export interface FirestoreErrorInfo {
+  error: string;
+  operationType: OperationType;
+  path: string | null;
+  authInfo: {
+    userId?: string | null;
+    email?: string | null;
+    emailVerified?: boolean | null;
+    isAnonymous?: boolean | null;
+  }
+}
+
+export function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
+  const errInfo: FirestoreErrorInfo = {
+    error: error instanceof Error ? error.message : String(error),
+    authInfo: {
+      userId: auth?.currentUser?.uid,
+      email: auth?.currentUser?.email,
+      emailVerified: auth?.currentUser?.emailVerified,
+      isAnonymous: auth?.currentUser?.isAnonymous,
     },
-    "TaikinRecord": {
-      "title": "TaikinRecord",
-      "description": "A daily clock-in/clock-out record for time tracking",
-      "type": "object",
-      "properties": {
-        "id": { "type": "string", "description": "The unique record ID" },
-        "date": { "type": "string", "description": "The date of the shift (YYYY-MM-DD)" },
-        "clockIn": { "type": "string", "description": "The clock-in time string (HH:MM)" },
-        "clockOut": { "type": "string", "description": "The clock-out time string (HH:MM)" },
-        "workMinutes": { "type": "integer", "description": "Calculated working minutes, excluding break" },
-        "overtimeMinutes": { "type": "integer", "description": "Calculated overtime minutes beyond guidelines" },
-        "userId": { "type": "string", "description": "The owner's Firebase Authentication UID" }
-      },
-      "required": ["id", "date", "clockIn", "clockOut", "workMinutes", "overtimeMinutes", "userId"]
-    },
-    "CalendarEvent": {
-      "title": "CalendarEvent",
-      "description": "A syncable or custom created user calendar event",
-      "type": "object",
-      "properties": {
-        "id": { "type": "string", "description": "The event ID" },
-        "summary": { "type": "string", "description": "Event summary/title" },
-        "description": { "type": "string", "description": "Event detailed description" },
-        "location": { "type": "string", "description": "Event location info" },
-        "userId": { "type": "string", "description": "The owner's Firebase Authentication UID" },
-        "start": {
-          "type": "object",
-          "properties": {
-            "dateTime": { "type": "string" },
-            "date": { "type": "string" }
-          }
-        },
-        "end": {
-          "type": "object",
-          "properties": {
-            "dateTime": { "type": "string" },
-            "date": { "type": "string" }
-          }
-        }
-      },
-      "required": ["id", "summary", "userId", "start", "end"]
+    operationType,
+    path
+  };
+  console.error('Firestore Error: ', JSON.stringify(errInfo));
+  throw new Error(JSON.stringify(errInfo));
+}
+
+// Validate connection to Firestore on initialization
+export async function testConnection() {
+  if (!db) return;
+  try {
+    await getDocFromServer(doc(db, 'test', 'connection'));
+    console.log("Firestore connection test passed.");
+  } catch (error) {
+    if (error instanceof Error && error.message.includes('offline')) {
+      console.error("Please check your Firebase configuration or network status.");
     }
-  },
-  "firestore": {
-    "tasks/{taskId}": {
-      "schema": "Task",
-      "description": "Collection where users store their private tasks"
-    },
-    "taikinRecords/{recordId}": {
-      "schema": "TaikinRecord",
-      "description": "Collection where users store their shift attendance logs"
-    },
-    "customCalendarEvents/{eventId}": {
-      "schema": "CalendarEvent",
-      "description": "Collection where users store their optional manual calendar events"
-    }
+  }
+}
+testConnection();
+
+// Task Helper Operations
+export async function fetchUserTasks(userId: string): Promise<Task[]> {
+  if (!db) return [];
+  const colPath = "tasks";
+  try {
+    const q = query(collection(db, colPath), where("userId", "==", userId));
+    const snapshot = await getDocs(q);
+    const tasks: Task[] = [];
+    snapshot.forEach((doc) => {
+      const data = doc.data();
+      tasks.push({
+        id: data.id,
+        title: data.title,
+        priority: data.priority,
+        estimatedMinutes: data.estimatedMinutes,
+        category: data.category,
+        status: data.status,
+        createdAt: data.createdAt,
+      });
+    });
+    return tasks;
+  } catch (err) {
+    handleFirestoreError(err, OperationType.LIST, colPath);
+    return [];
+  }
+}
+
+export async function saveUserTask(userId: string, task: Task): Promise<void> {
+  if (!db) return;
+  const colPath = "tasks";
+  try {
+    const docRef = doc(db, colPath, task.id);
+    await setDoc(docRef, {
+      ...task,
+      userId
+    });
+  } catch (err) {
+    handleFirestoreError(err, OperationType.WRITE, `${colPath}/${task.id}`);
+  }
+}
+
+export async function deleteUserTask(userId: string, taskId: string): Promise<void> {
+  if (!db) return;
+  const colPath = "tasks";
+  try {
+    const docRef = doc(db, colPath, taskId);
+    await deleteDoc(docRef);
+  } catch (err) {
+    handleFirestoreError(err, OperationType.DELETE, `${colPath}/${taskId}`);
+  }
+}
+
+// TaikinRecord Helper Operations
+export async function fetchUserTaikinRecords(userId: string): Promise<TaikinRecord[]> {
+  if (!db) return [];
+  const colPath = "taikinRecords";
+  try {
+    const q = query(collection(db, colPath), where("userId", "==", userId));
+    const snapshot = await getDocs(q);
+    const list: TaikinRecord[] = [];
+    snapshot.forEach((doc) => {
+      const data = doc.data();
+      list.push({
+        id: data.id,
+        date: data.date,
+        clockIn: data.clockIn,
+        clockOut: data.clockOut,
+        workMinutes: data.workMinutes,
+        overtimeMinutes: data.overtimeMinutes,
+      });
+    });
+    // Sort descending by date or id
+    return list.sort((a, b) => b.id.localeCompare(a.id));
+  } catch (err) {
+    handleFirestoreError(err, OperationType.LIST, colPath);
+    return [];
+  }
+}
+
+export async function saveUserTaikinRecord(userId: string, record: TaikinRecord): Promise<void> {
+  if (!db) return;
+  const colPath = "taikinRecords";
+  try {
+    const docRef = doc(db, colPath, record.id);
+    await setDoc(docRef, {
+      ...record,
+      userId
+    });
+  } catch (err) {
+    handleFirestoreError(err, OperationType.WRITE, `${colPath}/${record.id}`);
+  }
+}
+
+export async function deleteUserTaikinRecord(userId: string, recordId: string): Promise<void> {
+  if (!db) return;
+  const colPath = "taikinRecords";
+  try {
+    const docRef = doc(db, colPath, recordId);
+    await deleteDoc(docRef);
+  } catch (err) {
+    handleFirestoreError(err, OperationType.DELETE, `${colPath}/${recordId}`);
+  }
+}
+
+// Custom CalendarEvent Helper Operations
+export async function fetchUserCalendarEvents(userId: string): Promise<CalendarEvent[]> {
+  if (!db) return [];
+  const colPath = "customCalendarEvents";
+  try {
+    const q = query(collection(db, colPath), where("userId", "==", userId));
+    const snapshot = await getDocs(q);
+    const list: CalendarEvent[] = [];
+    snapshot.forEach((doc) => {
+      const data = doc.data();
+      list.push({
+        id: data.id,
+        summary: data.summary,
+        description: data.description || "",
+        location: data.location || "",
+        start: data.start,
+        end: data.end,
+      });
+    });
+    return list;
+  } catch (err) {
+    handleFirestoreError(err, OperationType.LIST, colPath);
+    return [];
+  }
+}
+
+export async function saveUserCalendarEvent(userId: string, event: CalendarEvent): Promise<void> {
+  if (!db) return;
+  const colPath = "customCalendarEvents";
+  try {
+    const docRef = doc(db, colPath, event.id);
+    await setDoc(docRef, {
+      ...event,
+      userId
+    });
+  } catch (err) {
+    handleFirestoreError(err, OperationType.WRITE, `${colPath}/${event.id}`);
+  }
+}
+
+export async function deleteUserCalendarEvent(userId: string, eventId: string): Promise<void> {
+  if (!db) return;
+  const colPath = "customCalendarEvents";
+  try {
+    const docRef = doc(db, colPath, eventId);
+    await deleteDoc(docRef);
+  } catch (err) {
+    handleFirestoreError(err, OperationType.DELETE, `${colPath}/${eventId}`);
   }
 }
