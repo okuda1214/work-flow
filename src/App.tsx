@@ -609,84 +609,72 @@ export default function App() {
     }
   };
 
-  // Voice briefing generator
-  const handlePlayBriefing = async () => {
-    if (isPlayingBriefing) {
-      handleStopAudio();
-      return;
+ // Voice briefing generator
+const handlePlayBriefing = async () => {
+  if (isPlayingBriefing) {
+    handleStopAudio();
+    return;
+  }
+
+  setIsGeneratingBriefing(true);
+  setBriefingError(null);
+
+  try {
+    // 1. まず、タスクと予定を短い自然な台本にまとめる
+    const scriptResponse = await fetch("/api/briefing-script", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        username,
+        tasks,
+        calendarEvents,
+      }),
+    });
+
+    if (!scriptResponse.ok) {
+      throw new Error("音声用の短い台本作成に失敗しました。時間をおいてもう一度お試しください。");
     }
 
-    setIsGeneratingBriefing(true);
-    setBriefingError(null);
+    const scriptData = await scriptResponse.json();
+    const compiledText = scriptData.script;
 
-    // Build perfect script
-    const welcome = `おはようございます。今日も一日頑張りましょう。${username}さんが今日やるタスクは以下の通りです。`;
-    
-    // Process list of tasks
-    const activeTasks = tasks.filter(t => t.status !== "completed");
-    const taskCount = activeTasks.length;
-    let tasksVoiceText = "";
-    
-    if (taskCount > 0) {
-      tasksVoiceText = activeTasks.map((t, idx) => {
-        const priorityJP = t.priority === "high" ? "優先度高めです" : t.priority === "low" ? "気軽にできます" : "";
-        return `、${idx + 1}番目、${t.category}の、${t.title}。見積もり時間は、${t.estimatedMinutes}分です。${priorityJP}`;
-      }).join("");
-    } else {
-      tasksVoiceText = "現在、処理待ちのタスクはありません。";
+    if (!compiledText) {
+      throw new Error("音声用の台本を取得できませんでした。");
     }
 
-    // Process calendar
-    let scheduleVoiceText = "";
-    if (calendarEvents.length > 0) {
-      scheduleVoiceText = `。本日のカレンダー予定は、${calendarEvents.length}件あります。`;
-      const eventsText = calendarEvents.map((evt) => {
-        let timeStr = "";
-        if (evt.start.dateTime) {
-          const date = new Date(evt.start.dateTime);
-          timeStr = `${date.getHours()}時${String(date.getMinutes()).padStart(2, "0")}分より、`;
-        }
-        return `、${timeStr}${evt.summary}`;
-      }).join("");
-      scheduleVoiceText += eventsText + "、が予定されています。";
-    } else {
-      scheduleVoiceText = "。本日は登録されているカレンダーの予定はございません。";
-    }
-
-    const compiledText = `${welcome}${tasksVoiceText}${scheduleVoiceText}。以上です。健康に気をつけて、有意義な一日にしましょう！`;
     setActiveSpeechText(compiledText);
 
-    try {
-      const response = await fetch("/api/tts", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ 
-          text: compiledText,
-          voice: selectedVoice 
-        }),
-      });
+    // 2. 短く整えた台本だけを音声生成する
+    const response = await fetch("/api/tts", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ 
+        text: compiledText,
+        voice: selectedVoice 
+      }),
+    });
 
-      if (!response.ok) {
-        throw new Error("音声作成に失敗しました。時間をおいてもう一度お試しください。");
-      }
-
-      const data = await response.json();
-      if (!data.audioBase64) {
-        throw new Error("音声データの読み込み時に不具合が発生しました。");
-      }
-
-      // Play audio
-      await playPcmAudio(data.audioBase64);
-    } catch (err: any) {
-      console.error(err);
-      setBriefingError(err.message || "読み上げ準備に失敗しました。");
-    } finally {
-      setIsGeneratingBriefing(false);
+    if (!response.ok) {
+      throw new Error("音声作成に失敗しました。時間をおいてもう一度お試しください。");
     }
-  };
 
+    const data = await response.json();
+    if (!data.audioBase64) {
+      throw new Error("音声データの読み込み時に不具合が発生しました。");
+    }
+
+    await playPcmAudio(data.audioBase64);
+  } catch (err: any) {
+    console.error(err);
+    setBriefingError(err.message || "読み上げ準備に失敗しました。");
+  } finally {
+    setIsGeneratingBriefing(false);
+  }
+};
   // Taikin Timer helper functions
   const handleClockIn = () => {
     setIsClockedIn(true);
