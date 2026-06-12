@@ -1,0 +1,6 @@
+{
+  "name": "Daily Tasks and Calendar Voice Briefing",
+  "description": "Organize your daily tasks, see your Google Calendar schedule, play voice briefings, and track task status on a dashboard.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

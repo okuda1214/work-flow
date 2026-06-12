@@ -1,0 +1,89 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global Safety Net default deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+    
+    // Core Helpers
+    function isSignedIn() {
+      return request.auth != null;
+    }
+    function isOwner(userId) {
+      return isSignedIn() && userId == request.auth.uid;
+    }
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+    function incoming() {
+      return request.resource.data;
+    }
+    function existing() {
+      return resource.data;
+    }
+    
+    // Strict Entity Validation Blueprints
+    function isValidTask(t) {
+      return t.id is string && t.id.size() <= 128
+        && t.title is string && t.title.size() <= 200
+        && t.priority in ['high', 'medium', 'low']
+        && t.category is string && t.category.size() <= 100
+        && t.status in ['not_started', 'in_progress', 'completed']
+        && t.createdAt is int
+        && t.userId == request.auth.uid;
+    }
+    
+    function isValidTaikin(tk) {
+      return tk.id is string && tk.id.size() <= 128
+        && tk.date is string && tk.date.size() == 10
+        && tk.clockIn is string && tk.clockIn.size() <= 5
+        && tk.clockOut is string && tk.clockOut.size() <= 5
+        && tk.workMinutes is int && tk.workMinutes >= 0 && tk.workMinutes <= 1440
+        && tk.overtimeMinutes is int && tk.overtimeMinutes >= 0 && tk.overtimeMinutes <= 1440
+        && tk.userId == request.auth.uid;
+    }
+    
+    function isValidCalendarEvent(ev) {
+      return ev.id is string && ev.id.size() <= 128
+        && ev.summary is string && ev.summary.size() <= 300
+        && ev.userId == request.auth.uid
+        && ev.start is map
+        && ev.end is map;
+    }
+
+    // Collection Security Declarations
+    
+    match /tasks/{taskId} {
+      allow create: if isSignedIn() && isValidId(taskId) && isValidTask(incoming());
+      allow get: if isSignedIn() && isValidId(taskId) && isOwner(existing().userId);
+      allow list: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow update: if isSignedIn() && isValidId(taskId) && isOwner(existing().userId) && isValidTask(incoming()) 
+        && incoming().userId == existing().userId
+        && incoming().id == existing().id
+        && incoming().createdAt == existing().createdAt;
+      allow delete: if isSignedIn() && isValidId(taskId) && isOwner(existing().userId);
+    }
+    
+    match /taikinRecords/{recordId} {
+      allow create: if isSignedIn() && isValidId(recordId) && isValidTaikin(incoming());
+      allow get: if isSignedIn() && isValidId(recordId) && isOwner(existing().userId);
+      allow list: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow update: if isSignedIn() && isValidId(recordId) && isOwner(existing().userId) && isValidTaikin(incoming())
+        && incoming().userId == existing().userId
+        && incoming().id == existing().id
+        && incoming().date == existing().date;
+      allow delete: if isSignedIn() && isValidId(recordId) && isOwner(existing().userId);
+    }
+    
+    match /customCalendarEvents/{eventId} {
+      allow create: if isSignedIn() && isValidId(eventId) && isValidCalendarEvent(incoming());
+      allow get: if isSignedIn() && isValidId(eventId) && isOwner(existing().userId);
+      allow list: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow update: if isSignedIn() && isValidId(eventId) && isOwner(existing().userId) && isValidCalendarEvent(incoming())
+        && incoming().userId == existing().userId
+        && incoming().id == existing().id;
+      allow delete: if isSignedIn() && isValidId(eventId) && isOwner(existing().userId);
+    }
+  }
+}
