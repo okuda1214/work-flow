@@ -814,7 +814,7 @@ export default function App() {
     };
   };
 
-  const JOBCAN_MOBILE_MY_PAGE_URL = "https://ssl.jobcan.jp/login/mb-employee";
+  const JOBCAN_MOBILE_MY_PAGE_URL = "https://ssl.jobcan.jp/employee";
   const BACKLOG_DASHBOARD_URL = "https://sorise.backlog.com/dashboard";
 
   const handleOpenJobcan = () => {
