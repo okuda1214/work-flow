@@ -1,6 +1,6 @@
 {
-  "name": "Daily Tasks and Calendar Voice Briefing",
-  "description": "Organize your daily tasks, see your Google Calendar schedule, play voice briefings, and track task status on a dashboard.",
+  "name": "WorkFlow Assist",
+  "description": "予定・タスク確認、出退勤タイマー、打刻メモ、仕事用リンクをまとめた個人用ワークフローアシスタント。",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

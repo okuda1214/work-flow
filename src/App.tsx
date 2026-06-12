@@ -1023,25 +1023,13 @@ export default function App() {
             <div className="w-4 h-4 bg-white rounded-full"></div>
           </div>
           <div>
-            <span className="font-bold text-xl tracking-tight text-[#111827]">MorningTask</span>
+            <span className="font-bold text-xl tracking-tight text-[#111827]">WorkFlow Assist</span>
             <span className="block text-[9px] font-bold text-slate-400 tracking-wider">VOICE BRIEFING</span>
           </div>
         </div>
 
         {/* Sidebar Nav Links */}
         <div className="space-y-1.5 flex-1">
-          <button
-            onClick={() => setActiveTab("tasks")}
-            className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-semibold text-sm transition-all cursor-pointer ${
-              activeTab === "tasks" 
-                ? "bg-amber-50 text-amber-700 font-bold" 
-                : "text-gray-500 hover:bg-gray-150"
-            }`}
-          >
-            <Layers className={`w-4 h-4 ${activeTab === "tasks" ? "text-amber-500" : "text-gray-400"}`} />
-            <span>予定 & タスク（朝礼）</span>
-          </button>
-
           <button
             onClick={() => setActiveTab("taikin")}
             className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-semibold text-sm transition-all cursor-pointer ${
@@ -1059,6 +1047,18 @@ export default function App() {
                 </span>
               )}
             </span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab("tasks")}
+            className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-semibold text-sm transition-all cursor-pointer ${
+              activeTab === "tasks" 
+                ? "bg-amber-50 text-amber-700 font-bold" 
+                : "text-gray-500 hover:bg-gray-150"
+            }`}
+          >
+            <Layers className={`w-4 h-4 ${activeTab === "tasks" ? "text-amber-500" : "text-gray-400"}`} />
+            <span>予定 & タスク</span>
           </button>
 
           <div className="text-xs font-bold text-gray-400 pt-6 px-1 uppercase tracking-wider block">宛名設定</div>
@@ -1195,23 +1195,35 @@ export default function App() {
                   <p className="text-[11px] text-gray-400 font-medium">出勤時に自由に書いた箇条書きリストをAIが整理します</p>
                 </div>
                 
-                <button
-                  onClick={handleParseTasks}
-                  disabled={isParsing || !rawText.trim()}
-                  className="w-full sm:w-auto inline-flex items-center justify-center gap-1.5 px-4 py-2 bg-gradient-to-r from-amber-400 to-amber-600 hover:from-amber-500 hover:to-amber-700 text-white text-xs font-bold rounded-xl shadow-sm transition-all disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
-                >
-                  {isParsing ? (
-                    <>
-                      <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                      整理中...
-                    </>
-                  ) : (
-                    <>
-                      <Sparkles className="w-3.5 h-3.5 animate-pulse" />
-                      AIで整理して反映
-                    </>
-                  )}
-                </button>
+                <div className="w-full sm:w-auto flex flex-col sm:flex-row gap-2">
+                  <button
+                    onClick={handleOpenBacklog}
+                    className="w-full sm:w-auto inline-flex items-center justify-center gap-1.5 px-4 py-2 bg-slate-700 hover:bg-slate-800 text-white text-xs font-bold rounded-xl shadow-sm transition-all cursor-pointer"
+                    type="button"
+                  >
+                    <ExternalLink className="w-3.5 h-3.5" />
+                    Backlogを開く
+                  </button>
+
+                  <button
+                    onClick={handleParseTasks}
+                    disabled={isParsing || !rawText.trim()}
+                    className="w-full sm:w-auto inline-flex items-center justify-center gap-1.5 px-4 py-2 bg-gradient-to-r from-amber-400 to-amber-600 hover:from-amber-500 hover:to-amber-700 text-white text-xs font-bold rounded-xl shadow-sm transition-all disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+                    type="button"
+                  >
+                    {isParsing ? (
+                      <>
+                        <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                        整理中...
+                      </>
+                    ) : (
+                      <>
+                        <Sparkles className="w-3.5 h-3.5 animate-pulse" />
+                        AIで整理して反映
+                      </>
+                    )}
+                  </button>
+                </div>
               </div>
 
               <textarea
@@ -1550,12 +1562,6 @@ export default function App() {
                 </div>
               )}
             </div>
-
-            {/* Premium explanation Footer card */}
-            <div className="text-[10px] text-gray-400/85 leading-relaxed bg-[#F1F3F5] p-3 rounded-2xl border border-gray-200/50">
-              💡 **音声読み上げ機能の使い方**<br />
-              自然な女性の声で「今日やることを箇条書き」から抽出したタスク情報と、Googleカレンダーの本日のカレンダー予定項目をブレンドした、実用的なオーディオ朝礼を作成・開始します。
-            </div>
           </section>
 
         </div>
@@ -1635,7 +1641,7 @@ export default function App() {
                 </div>
 
                 {/* Interactive 打刻 (Clocking Buttons) */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
                   <button
                     onClick={handleClockIn}
                     disabled={isClockedIn || isClockedOut}
@@ -1660,14 +1666,6 @@ export default function App() {
                   >
                     <ExternalLink className="w-3.5 h-3.5" />
                     ジョブカンを開く
-                  </button>
-
-                  <button
-                    onClick={handleOpenBacklog}
-                    className="py-3 px-4 bg-slate-700 hover:bg-slate-800 text-white font-bold text-xs rounded-xl shadow-sm transition-all flex items-center justify-center gap-2 cursor-pointer"
-                  >
-                    <ExternalLink className="w-3.5 h-3.5" />
-                    Backlogを開く
                   </button>
 
                   <button
@@ -2073,7 +2071,7 @@ export default function App() {
                 </div>
 
                 <p className="text-[10px] text-gray-400 leading-relaxed bg-[#F8FAFC] p-3 rounded-xl border border-gray-150">
-                  💡 **統一メリット:** 朝は「MorningTask」でやるべき日課とGoogle予定をまとめて音声朝礼。出退勤タイマーで勤務時間を確認しながら、打刻漏れや修正メモも残せます。
+                  💡 **活用メモ:** 朝は予定とタスクを確認し、出退勤タイマーで勤務時間を記録できます。打刻漏れや修正メモも残せます。
                 </p>
               </div>
             </section>
