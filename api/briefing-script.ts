@@ -1,3 +1,5 @@
+import { GoogleGenAI } from "@google/genai";
+
 export const config = {
   maxDuration: 30,
 };
@@ -13,20 +15,15 @@ function getBody(req: any) {
   return req.body || {};
 }
 
-function extractOutputText(data: any): string {
-  if (typeof data?.output_text === "string") return data.output_text;
+function formatEventTime(event: any) {
+  const value = event?.start?.dateTime || event?.start?.date;
+  if (!value) return "時間未定";
 
-  const output = Array.isArray(data?.output) ? data.output : [];
-  const texts: string[] = [];
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "時間未定";
 
-  for (const item of output) {
-    const content = Array.isArray(item?.content) ? item.content : [];
-    for (const part of content) {
-      if (typeof part?.text === "string") texts.push(part.text);
-    }
-  }
-
-  return texts.join("\n").trim();
+  if (event?.start?.date) return "終日";
+  return `${date.getHours()}時${String(date.getMinutes()).padStart(2, "0")}分`;
 }
 
 export default async function handler(req: any, res: any) {
@@ -37,66 +34,65 @@ export default async function handler(req: any, res: any) {
   try {
     const { username = "あなた", tasks = [], calendarEvents = [] } = getBody(req);
 
-    if (!process.env.OPENAI_API_KEY) {
-      return res.status(500).json({ error: "OPENAI_API_KEY is not set." });
+    if (!process.env.GEMINI_API_KEY) {
+      return res.status(500).json({ error: "GEMINI_API_KEY is not set." });
     }
 
     const activeTasks = Array.isArray(tasks)
       ? tasks.filter((task: any) => task?.status !== "completed")
       : [];
 
+    const priorityRank: Record<string, number> = { high: 0, medium: 1, low: 2 };
     const taskLines = activeTasks
+      .sort((a: any, b: any) => (priorityRank[a?.priority] ?? 9) - (priorityRank[b?.priority] ?? 9))
       .slice(0, 8)
       .map((task: any, index: number) => {
-        return `${index + 1}. ${task?.title || "無題のタスク"} / 優先度:${task?.priority || "medium"} / 目安:${task?.estimatedMinutes || 30}分`;
+        const priority = task?.priority === "high" ? "高" : task?.priority === "low" ? "低" : "中";
+        return `${index + 1}. ${task?.title || "無題のタスク"} / 優先度:${priority} / 目安:${task?.estimatedMinutes || 30}分 / 状態:${task?.status || "未着手"}`;
       })
       .join("\n") || "未完了タスクはありません。";
 
     const eventLines = Array.isArray(calendarEvents)
       ? calendarEvents
-          .slice(0, 5)
-          .map((event: any, index: number) => {
-            const time = event?.startTime || event?.start || "";
-            return `${index + 1}. ${time ? `${time} ` : ""}${event?.summary || event?.title || "予定"}`;
+          .sort((a: any, b: any) => {
+            const aTime = new Date(a?.start?.dateTime || a?.start?.date || 0).getTime();
+            const bTime = new Date(b?.start?.dateTime || b?.start?.date || 0).getTime();
+            return aTime - bTime;
           })
+          .slice(0, 5)
+          .map((event: any, index: number) => `${index + 1}. ${formatEventTime(event)} ${event?.summary || "予定"}`)
           .join("\n")
       : "";
 
-    const response = await fetch("https://api.openai.com/v1/responses", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-        "Content-Type": "application/json",
+    const ai = new GoogleGenAI({
+      apiKey: process.env.GEMINI_API_KEY,
+      httpOptions: {
+        headers: {
+          "User-Agent": "aistudio-build",
+        },
       },
-      body: JSON.stringify({
-        model: process.env.OPENAI_SCRIPT_MODEL || "gpt-5.4-nano",
-        instructions: `あなたは個人用の朝の音声ブリーフィングを作るアシスタントです。
-以下の条件を必ず守ってください。
-・日本語の自然な話し言葉にする
-・30〜40秒で読める長さにする
-・タスクをすべて読み上げず、重要そうなものを2〜3個だけ選ぶ
-・予定は最大3件まで触れる
-・不安をあおらず、やさしく前向きにする
-・箇条書きではなく、音声で読みやすい文章にする
-・読み上げ本文だけを返す`,
-        input: `ユーザー名: ${username}
-
-未完了タスク:
-${taskLines}
-
-今日の予定:
-${eventLines || "予定はありません。"}`,
-      }),
     });
 
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error("OpenAI script error:", errorText);
-      return res.status(response.status).json({ error: errorText || "Failed to generate briefing script." });
-    }
+    const systemInstruction = `あなたは個人用の朝の音声ブリーフィングを作るアシスタントです。
+以下の条件を必ず守ってください。
+・日本語の自然な話し言葉にする
+・30〜45秒で読める長さにする
+・タスクをすべて読み上げず、重要そうなものを2〜3個だけ選ぶ
+・予定は時間が近いもの、重要そうなものを中心に最大3件まで触れる
+・不安をあおらず、やさしく前向きにする
+・ビジネス文書っぽくしすぎない
+・箇条書きではなく、音声で読みやすい文章にする
+・余計な前置きや説明は入れず、読み上げ本文だけを返す`;
 
-    const data = await response.json();
-    const script = extractOutputText(data).trim();
+    const response = await ai.models.generateContent({
+      model: "gemini-3.5-flash",
+      contents: `ユーザー名: ${username}\n\n未完了タスク:\n${taskLines}\n\n今日の予定:\n${eventLines || "予定はありません。"}`,
+      config: {
+        systemInstruction,
+      },
+    });
+
+    const script = (response.text || "").trim();
 
     if (!script) {
       return res.status(500).json({ error: "No briefing script generated." });
@@ -104,7 +100,7 @@ ${eventLines || "予定はありません。"}`,
 
     return res.status(200).json({ script });
   } catch (error: any) {
-    console.error("Error generating briefing script via OpenAI:", error);
+    console.error("Error generating briefing script:", error);
     return res.status(500).json({ error: error.message || "Failed to generate briefing script." });
   }
 }

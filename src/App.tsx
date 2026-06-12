@@ -609,42 +609,67 @@ export default function App() {
     }
   };
 
-  // Play MP3/WAV/AAC audio returned as base64 from OpenAI TTS
-  const playEncodedAudio = async (base64Audio: string, mimeType = "audio/mpeg") => {
-    try {
-      handleStopAudio();
+  const FIXED_VOICE_CACHE_VERSION = "v1";
 
-      const audio = new Audio(`data:${mimeType};base64,${base64Audio}`);
-      audioRef.current = audio;
+  const getFixedVoiceText = (type: "clockIn" | "clockOut") => {
+    const displayName = username || "奥田";
 
-      audio.onended = () => {
-        if (audioRef.current === audio) {
-          setIsPlayingBriefing(false);
-        }
-      };
-
-      audio.onerror = () => {
-        setIsPlayingBriefing(false);
-        setBriefingError("ブラウザでの音声再生時に問題が発生しました。");
-      };
-
-      setIsPlayingBriefing(true);
-      await audio.play();
-    } catch (err) {
-      console.error("Encoded audio playback error:", err);
-      setBriefingError("ブラウザでの音声再生時に問題が発生しました。");
-      setIsPlayingBriefing(false);
+    if (type === "clockIn") {
+      return `${displayName}さん、おはようございます。今日も一日、無理のないペースで頑張りましょう。`;
     }
+
+    return `${displayName}さん、今日もお疲れさまでした。今日の作業はここまでです。ゆっくり休んでくださいね。`;
   };
 
-  const playGeneratedAudio = async (audioBase64: string, mimeType?: string) => {
-    if (mimeType) {
-      await playEncodedAudio(audioBase64, mimeType);
+  const playFixedVoice = async (type: "clockIn" | "clockOut") => {
+    if (isPlayingBriefing) {
+      handleStopAudio();
       return;
     }
 
-    // 古いGemini PCM形式にも戻せるように残しておく
-    await playPcmAudio(audioBase64);
+    const text = getFixedVoiceText(type);
+    const cacheKey = `fixed-voice-${type}-${selectedVoice}-${username || "奥田"}-${FIXED_VOICE_CACHE_VERSION}`;
+
+    setBriefingError(null);
+    setActiveSpeechText(text);
+    setIsGeneratingBriefing(true);
+
+    try {
+      const cachedAudio = localStorage.getItem(cacheKey);
+
+      if (cachedAudio) {
+        await playPcmAudio(cachedAudio);
+        return;
+      }
+
+      const response = await fetch("/api/tts", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          text,
+          voice: selectedVoice,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error("固定音声の作成に失敗しました。時間をおいてもう一度お試しください。");
+      }
+
+      const data = await response.json();
+      if (!data.audioBase64) {
+        throw new Error("固定音声データを取得できませんでした。");
+      }
+
+      localStorage.setItem(cacheKey, data.audioBase64);
+      await playPcmAudio(data.audioBase64);
+    } catch (err: any) {
+      console.error(err);
+      setBriefingError(err.message || "固定音声の再生に失敗しました。");
+    } finally {
+      setIsGeneratingBriefing(false);
+    }
   };
 
   // Voice briefing generator
@@ -705,7 +730,7 @@ export default function App() {
         throw new Error("音声データの読み込み時に不具合が発生しました。");
       }
 
-      await playGeneratedAudio(data.audioBase64, data.mimeType);
+      await playPcmAudio(data.audioBase64);
     } catch (err: any) {
       console.error(err);
       setBriefingError(err.message || "読み上げ準備に失敗しました。");
@@ -726,6 +751,9 @@ export default function App() {
     const targetHour = (currentTime.getHours() + 9) % 24;
     const targetStr = `${String(targetHour).padStart(2, "0")}:${String(currentTime.getMinutes()).padStart(2, "0")}`;
     setTargetClockOutTime(targetStr);
+
+    // 出勤時の固定ボイス。初回だけ音声生成し、2回目以降はブラウザに保存した音声を再生します。
+    void playFixedVoice("clockIn");
   };
 
   const handleClockOut = () => {
@@ -762,6 +790,9 @@ export default function App() {
     if (currentUser?.uid) {
       saveUserTaikinRecord(currentUser.uid, newRecord).catch(console.error);
     }
+
+    // 退勤時の固定ボイス。初回だけ音声生成し、2回目以降はブラウザに保存した音声を再生します。
+    void playFixedVoice("clockOut");
   };
 
   const handleResetClock = () => {
@@ -779,64 +810,7 @@ export default function App() {
   };
 
   const handlePlayClosingBriefing = async () => {
-    if (isPlayingBriefing) {
-      handleStopAudio();
-      return;
-    }
-
-    setIsGeneratingBriefing(true);
-    setBriefingError(null);
-
-    const completedTasks = tasks.filter(t => t.status === "completed");
-    const inTime = actualClockInTime || clockInTime;
-    const outTime = actualClockOutTime || `${String(currentTime.getHours()).padStart(2, "0")}:${String(currentTime.getMinutes()).padStart(2, "0")}`;
-    
-    // Calculate work hours and overtime
-    const [inH, inM] = inTime.split(":").map(Number);
-    const [outH, outM] = outTime.split(":").map(Number);
-    let diffMinutes = (outH * 60 + outM) - (inH * 60 + inM);
-    if (diffMinutes < 0) diffMinutes += 24 * 60;
-    const actualWorkMin = Math.max(0, diffMinutes - breakMinutes);
-    const workHoursString = `${Math.floor(actualWorkMin / 60)}時間${actualWorkMin % 60}分`;
-
-    const [tgtH, tgtM] = targetClockOutTime.split(":").map(Number);
-    let overMin = (outH * 60 + outM) - (tgtH * 60 + tgtM);
-    if (overMin < 0 && (outH * 60 + outM) < (inH * 60 + inM)) overMin += 24 * 60;
-    overMin = Math.max(0, overMin);
-    const overtimeString = overMin > 0 ? `残業時間は、${Math.floor(overMin / 60)}時間${overMin % 60}分でした。` : "残業はなく、定時での退勤です。素晴らしい時間管理ですね！";
-
-    const text = `お疲れ様でした、${username}さん。今日の業務がすべて終了しました。本日の出勤時間は${inTime}、退勤時間は${outTime}。休憩時間を除いた実働時間は${workHoursString}です。${overtimeString}また、本日は全体のタスクのうち、${completedTasks.length}件を完了させることができました。一生懸命取り組んだ自分をたっぷり褒めてあげてくださいね。それでは、今夜は心も体もゆっくり休めてリフレッシュしてください。今日お疲れ様でした！`;
-    setActiveSpeechText(text);
-
-    try {
-      const response = await fetch("/api/tts", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ 
-          text: text,
-          voice: selectedVoice 
-        }),
-      });
-
-      if (!response.ok) {
-        throw new Error("お疲れ様音声の作成に失敗しました。時間をおいてもう一度お試しください。");
-      }
-
-      const data = await response.json();
-      if (!data.audioBase64) {
-        throw new Error("音声データの読み込み時に不具合が発生しました。");
-      }
-
-      // Play audio
-      await playGeneratedAudio(data.audioBase64, data.mimeType);
-    } catch (err: any) {
-      console.error(err);
-      setBriefingError(err.message || "お疲れ様音声の生成に失敗しました。");
-    } finally {
-      setIsGeneratingBriefing(false);
-    }
+    await playFixedVoice("clockOut");
   };
 
   // Helper date tools
