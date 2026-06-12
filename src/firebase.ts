@@ -142,6 +142,14 @@ export async function fetchUserTaikinRecords(userId: string): Promise<TaikinReco
         clockOut: data.clockOut,
         workMinutes: data.workMinutes,
         overtimeMinutes: data.overtimeMinutes,
+        breakMinutes: data.breakMinutes,
+        isManual: data.isManual || false,
+        isEdited: data.isEdited || false,
+        originalClockIn: data.originalClockIn || undefined,
+        originalClockOut: data.originalClockOut || undefined,
+        note: data.note || "",
+        createdAt: data.createdAt,
+        updatedAt: data.updatedAt,
       });
     });
     // Sort descending by date or id

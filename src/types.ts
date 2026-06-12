@@ -37,5 +37,12 @@ export interface TaikinRecord {
   clockOut: string;
   workMinutes: number;
   overtimeMinutes: number;
+  breakMinutes?: number;
+  isManual?: boolean;
+  isEdited?: boolean;
+  originalClockIn?: string;
+  originalClockOut?: string;
+  note?: string;
+  createdAt?: number;
+  updatedAt?: number;
 }
-

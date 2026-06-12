@@ -23,7 +23,8 @@ import {
   Timer,
   History,
   Award,
-  Coffee
+  Coffee,
+  ExternalLink
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { initAuth, googleSignIn, logout } from "./auth";
@@ -165,6 +166,26 @@ export default function App() {
     }
     return [];
   });
+
+  const formatInputDate = (date: Date) => {
+    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+  };
+
+  const formatInputTime = (date: Date) => {
+    return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
+  };
+
+  const [isManualPunchOpen, setIsManualPunchOpen] = useState(false);
+  const [manualDate, setManualDate] = useState<string>(() => formatInputDate(new Date()));
+  const [manualClockIn, setManualClockIn] = useState<string>(clockInTime);
+  const [manualClockOut, setManualClockOut] = useState<string>(targetClockOutTime);
+  const [manualNote, setManualNote] = useState<string>("");
+
+  const [editingTaikinId, setEditingTaikinId] = useState<string | null>(null);
+  const [editDate, setEditDate] = useState<string>("");
+  const [editClockIn, setEditClockIn] = useState<string>("");
+  const [editClockOut, setEditClockOut] = useState<string>("");
+  const [editNote, setEditNote] = useState<string>("");
 
   // Sync Taikin states to local storage
   useEffect(() => {
@@ -740,6 +761,70 @@ export default function App() {
   };
 
   // Taikin Timer helper functions
+  const getWorkMinutesFromTimes = (clockIn: string, clockOut: string, breakM: number) => {
+    const [inH, inM] = clockIn.split(":").map(Number);
+    const [outH, outM] = clockOut.split(":").map(Number);
+
+    let diffMinutes = (outH * 60 + outM) - (inH * 60 + inM);
+    if (diffMinutes < 0) diffMinutes += 24 * 60;
+
+    return Math.max(0, diffMinutes - breakM);
+  };
+
+  const getOvertimeMinutesFromTimes = (clockOut: string, targetClockOut: string, clockIn?: string) => {
+    const [outH, outM] = clockOut.split(":").map(Number);
+    const [tgtH, tgtM] = targetClockOut.split(":").map(Number);
+
+    let overtimeM = (outH * 60 + outM) - (tgtH * 60 + tgtM);
+    if (clockIn) {
+      const [inH, inM] = clockIn.split(":").map(Number);
+      if (overtimeM < 0 && (outH * 60 + outM) < (inH * 60 + inM)) overtimeM += 24 * 60;
+    }
+
+    return Math.max(0, overtimeM);
+  };
+
+  const buildTaikinRecord = (params: {
+    id?: string;
+    date: string;
+    clockIn: string;
+    clockOut: string;
+    note?: string;
+    isManual?: boolean;
+    isEdited?: boolean;
+    originalClockIn?: string;
+    originalClockOut?: string;
+    createdAt?: number;
+  }): TaikinRecord => {
+    return {
+      id: params.id || `tk-${Date.now()}`,
+      date: params.date,
+      clockIn: params.clockIn,
+      clockOut: params.clockOut,
+      workMinutes: getWorkMinutesFromTimes(params.clockIn, params.clockOut, breakMinutes),
+      overtimeMinutes: getOvertimeMinutesFromTimes(params.clockOut, targetClockOutTime, params.clockIn),
+      breakMinutes,
+      isManual: params.isManual,
+      isEdited: params.isEdited,
+      originalClockIn: params.originalClockIn,
+      originalClockOut: params.originalClockOut,
+      note: params.note || "",
+      createdAt: params.createdAt || Date.now(),
+      updatedAt: Date.now(),
+    };
+  };
+
+  const JOBCAN_MOBILE_MY_PAGE_URL = "https://ssl.jobcan.jp/login/mb-employee";
+  const BACKLOG_DASHBOARD_URL = "https://sorise.backlog.com/dashboard";
+
+  const handleOpenJobcan = () => {
+    window.open(JOBCAN_MOBILE_MY_PAGE_URL, "_blank", "noopener,noreferrer");
+  };
+
+  const handleOpenBacklog = () => {
+    window.open(BACKLOG_DASHBOARD_URL, "_blank", "noopener,noreferrer");
+  };
+
   const handleClockIn = () => {
     setIsClockedIn(true);
     setIsClockedOut(false);
@@ -760,31 +845,17 @@ export default function App() {
     if (!isClockedIn) return;
     setIsClockedIn(false);
     setIsClockedOut(true);
-    const nowStr = `${String(currentTime.getHours()).padStart(2, "0")}:${String(currentTime.getMinutes()).padStart(2, "0")}`;
+    const nowStr = formatInputTime(currentTime);
     setActualClockOutTime(nowStr);
 
     const inTime = actualClockInTime || clockInTime;
-    const [inH, inM] = inTime.split(":").map(Number);
-    const [outH, outM] = nowStr.split(":").map(Number);
-    
-    let diffMinutes = (outH * 60 + outM) - (inH * 60 + inM);
-    if (diffMinutes < 0) diffMinutes += 24 * 60; // Handle cross-midnight
-    
-    const workM = Math.max(0, diffMinutes - breakMinutes);
-
-    const [tgtH, tgtM] = targetClockOutTime.split(":").map(Number);
-    let overtimeM = (outH * 60 + outM) - (tgtH * 60 + tgtM);
-    if (overtimeM < 0 && (outH * 60 + outM) < (inH * 60 + inM)) overtimeM += 24 * 60;
-    overtimeM = Math.max(0, overtimeM);
-
-    const newRecord: TaikinRecord = {
+    const newRecord = buildTaikinRecord({
       id: `tk-${Date.now()}`,
-      date: `${currentTime.getFullYear()}-${String(currentTime.getMonth() + 1).padStart(2, "0")}-${String(currentTime.getDate()).padStart(2, "0")}`,
+      date: formatInputDate(currentTime),
       clockIn: inTime,
       clockOut: nowStr,
-      workMinutes: workM,
-      overtimeMinutes: overtimeM,
-    };
+      note: "通常打刻",
+    });
     
     setTaikinHistory(prev => [newRecord, ...prev]);
     if (currentUser?.uid) {
@@ -807,6 +878,70 @@ export default function App() {
     if (currentUser?.uid) {
       deleteUserTaikinRecord(currentUser.uid, id).catch(console.error);
     }
+  };
+
+  const handleAddManualTaikinRecord = () => {
+    if (!manualDate || !manualClockIn || !manualClockOut) return;
+
+    const newRecord = buildTaikinRecord({
+      id: `tk-manual-${Date.now()}`,
+      date: manualDate,
+      clockIn: manualClockIn,
+      clockOut: manualClockOut,
+      note: manualNote || "打刻漏れを後から追加",
+      isManual: true,
+    });
+
+    setTaikinHistory(prev => [newRecord, ...prev]);
+    if (currentUser?.uid) {
+      saveUserTaikinRecord(currentUser.uid, newRecord).catch(console.error);
+    }
+
+    setManualNote("");
+    setIsManualPunchOpen(false);
+  };
+
+  const handleStartEditTaikinRecord = (record: TaikinRecord) => {
+    setEditingTaikinId(record.id);
+    setEditDate(record.date);
+    setEditClockIn(record.clockIn);
+    setEditClockOut(record.clockOut);
+    setEditNote(record.note || "");
+  };
+
+  const handleCancelEditTaikinRecord = () => {
+    setEditingTaikinId(null);
+    setEditDate("");
+    setEditClockIn("");
+    setEditClockOut("");
+    setEditNote("");
+  };
+
+  const handleSaveEditTaikinRecord = () => {
+    if (!editingTaikinId || !editDate || !editClockIn || !editClockOut) return;
+
+    const target = taikinHistory.find(item => item.id === editingTaikinId);
+    if (!target) return;
+
+    const updatedRecord = buildTaikinRecord({
+      id: target.id,
+      date: editDate,
+      clockIn: editClockIn,
+      clockOut: editClockOut,
+      note: editNote || "打刻時間を修正",
+      isManual: target.isManual,
+      isEdited: true,
+      originalClockIn: target.originalClockIn || target.clockIn,
+      originalClockOut: target.originalClockOut || target.clockOut,
+      createdAt: target.createdAt,
+    });
+
+    setTaikinHistory(prev => prev.map(item => item.id === editingTaikinId ? updatedRecord : item));
+    if (currentUser?.uid) {
+      saveUserTaikinRecord(currentUser.uid, updatedRecord).catch(console.error);
+    }
+
+    handleCancelEditTaikinRecord();
   };
 
   const handlePlayClosingBriefing = async () => {
@@ -917,7 +1052,7 @@ export default function App() {
           >
             <Timer className={`w-4 h-4 ${activeTab === "taikin" ? "text-indigo-500" : "text-gray-400"}`} />
             <span className="flex items-center gap-1.5 justify-between w-full">
-              <span>退勤タイマー（終礼）</span>
+              <span>出退勤タイマー</span>
               {isClockedIn && (
                 <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[8px] font-bold bg-rose-100 text-rose-600 animate-pulse">
                   勤務中
@@ -983,7 +1118,7 @@ export default function App() {
                 ローカル・スタンドアロン動作中
               </div>
               <p className="text-[9px] text-gray-500 leading-relaxed">
-                ログイン不要ですべてのタスク管理、退勤タイマー、音声読み上げが問題なく動作します。Google連携を行うと、実際のカレンダー予定も自動同期されます。
+                ログイン不要でタスク管理と出退勤タイマーが動作します。Google連携を行うと、実際のカレンダー予定も自動同期されます。
               </p>
               <button
                 onClick={() => setIsDemoMode(false)}
@@ -1324,105 +1459,9 @@ export default function App() {
             </div>
           </section>
 
-          {/* Dashboard Right Column (Col: 5) -> Premium voice reader & Google Calendar */}
+          {/* Dashboard Right Column (Col: 5) -> Google Calendar */}
           <section className="lg:col-span-5 flex flex-col gap-6 md:gap-8">
             
-            {/* Box 1: Beautiful Slate Dark Voice Card */}
-            <div className="bg-[#2D3139] p-6 rounded-[32px] text-white shadow-lg flex flex-col gap-5 relative overflow-hidden">
-              <div className="absolute top-0 right-0 w-32 h-32 bg-white/5 rounded-full blur-2xl pointer-events-none"></div>
-              
-              <div className="flex items-center justify-between">
-                <div>
-                  <h3 className="font-bold text-sm tracking-tight">音声読み上げアシスタント</h3>
-                  <p className="text-[9px] uppercase tracking-wider text-gray-400 font-bold">Natural Female Voice</p>
-                </div>
-                <div className="w-1.5 h-1.5 bg-amber-400 rounded-full animate-ping" />
-              </div>
-
-              {/* Central Voice icon and animation */}
-              <div className="flex flex-col items-center py-4 bg-white/5 rounded-2xl border border-white/5">
-                
-                {/* Visual Speaker Circle with pulsing shadow matching design-html */}
-                <div className="w-14 h-14 bg-amber-400 rounded-full flex items-center justify-center mb-3 shadow-[0_0_20px_rgba(251,191,36,0.4)]">
-                  <div className="w-6 h-6 bg-white rounded-sm rotate-45 flex items-center justify-center relative">
-                    <div className="w-1 h-3.5 bg-amber-400 rounded-full mx-[1.5px] animate-pulse"></div>
-                    <div className="w-1 h-2.5 bg-amber-400 rounded-full mx-[1.5px]"></div>
-                    <div className="w-1.5 h-1.5 bg-amber-400 rounded-full absolute -top-1 -right-1"></div>
-                  </div>
-                </div>
-
-                <p className="text-xs text-center px-4 leading-relaxed opacity-90 italic text-slate-100 font-medium">
-                  {isPlayingBriefing 
-                    ? `「${activeSpeechText.slice(0, 75)}...」`
-                    : `「おはようございます。奥田さんが今日やるタスクは、会議の資料作成、カレンダー予定など計${tasks.filter(t => t.status !== "completed").length}件です。」`}
-                </p>
-
-                {/* Animated waves in clean minimalism design */}
-                <div className="h-4 flex items-center justify-center gap-1 w-full mt-3">
-                  {audioWaves.map((val, idx) => (
-                    <div
-                      key={idx}
-                      style={{ height: `${val / 3}px` }}
-                      className={`w-0.5 rounded-full ${isPlayingBriefing ? "bg-amber-400" : "bg-white/20"}`}
-                    />
-                  ))}
-                </div>
-              </div>
-
-              {/* TTS Voice Tone option picker */}
-              <div className="flex flex-col gap-1.5 bg-white/5 p-3 rounded-xl border border-white/5">
-                <label className="text-[10px] font-bold text-slate-300 uppercase tracking-wider">声の選択 (自然な日本語):</label>
-                <select
-                  value={selectedVoice}
-                  onChange={(e) => setSelectedVoice(e.target.value)}
-                  className="bg-[#2D3139] border border-white/10 text-xs text-white rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-1 focus:ring-amber-400"
-                >
-                  {PREBUILT_VOICES.map((vo) => (
-                    <option key={vo.id} value={vo.id} className="bg-[#2D3139]">
-                      {vo.name} ({vo.gender === "female" ? "女性" : "男性"})
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              {/* Play Aloud Action button */}
-              <button
-                onClick={handlePlayBriefing}
-                disabled={isGeneratingBriefing}
-                className={`w-full py-3 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 border cursor-pointer ${
-                  isPlayingBriefing
-                    ? "bg-white text-slate-900 border-white"
-                    : isGeneratingBriefing
-                    ? "bg-slate-700 text-slate-300 border-slate-650 cursor-wait"
-                    : "bg-white/10 hover:bg-white/20 border-white/10 text-white"
-                }`}
-              >
-                {isGeneratingBriefing ? (
-                  <>
-                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                    音声を生成中...
-                  </>
-                ) : isPlayingBriefing ? (
-                  <>
-                    <Square className="w-3.5 h-3.5 fill-current" />
-                    読み上げを一時停止
-                  </>
-                ) : (
-                  <>
-                    <Play className="w-3.5 h-3.5 fill-current" />
-                    音声読み上げを開始する
-                  </>
-                )}
-              </button>
-
-              {briefingError && (
-                <div className="text-rose-400 text-[10px] bg-rose-950/40 border border-rose-900/60 rounded-xl p-2.5 flex items-center gap-1.5">
-                  <AlertCircle className="w-3.5 h-3.5 shrink-0" />
-                  <span>{briefingError}</span>
-                </div>
-              )}
-            </div>
-
             {/* Box 2: Premium Google Calendar events sync list */}
             <div className="bg-white p-6 rounded-[32px] border border-gray-100 shadow-sm flex flex-col gap-4">
               <div className="flex items-center justify-between">
@@ -1596,7 +1635,7 @@ export default function App() {
                 </div>
 
                 {/* Interactive 打刻 (Clocking Buttons) */}
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
                   <button
                     onClick={handleClockIn}
                     disabled={isClockedIn || isClockedOut}
@@ -1616,12 +1655,102 @@ export default function App() {
                   </button>
 
                   <button
+                    onClick={handleOpenJobcan}
+                    className="py-3 px-4 bg-sky-500 hover:bg-sky-600 text-white font-bold text-xs rounded-xl shadow-sm transition-all flex items-center justify-center gap-2 cursor-pointer"
+                  >
+                    <ExternalLink className="w-3.5 h-3.5" />
+                    ジョブカンを開く
+                  </button>
+
+                  <button
+                    onClick={handleOpenBacklog}
+                    className="py-3 px-4 bg-slate-700 hover:bg-slate-800 text-white font-bold text-xs rounded-xl shadow-sm transition-all flex items-center justify-center gap-2 cursor-pointer"
+                  >
+                    <ExternalLink className="w-3.5 h-3.5" />
+                    Backlogを開く
+                  </button>
+
+                  <button
                     onClick={handleResetClock}
                     className="py-3 px-4 bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold text-xs rounded-xl border border-gray-200 transition-all flex items-center justify-center gap-1 cursor-pointer"
                   >
                     <RefreshCw className="w-3.5 h-3.5" />
                     今日の記録をリセット
                   </button>
+                </div>
+
+                <div className="bg-slate-50/70 border border-slate-100 rounded-2xl p-4 flex flex-col gap-3">
+                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                    <div>
+                      <h4 className="text-xs font-extrabold text-gray-800 flex items-center gap-2">
+                        <Plus className="w-3.5 h-3.5 text-indigo-500" />
+                        打刻漏れを追加
+                      </h4>
+                      <p className="text-[10px] text-gray-400 mt-0.5">ジョブカンの修正申請用メモとして、後から出勤・退勤時間を記録できます。</p>
+                    </div>
+                    <button
+                      onClick={() => setIsManualPunchOpen(prev => !prev)}
+                      className="px-3 py-2 bg-white hover:bg-gray-50 text-gray-700 text-[11px] font-bold rounded-xl border border-gray-200 shadow-sm transition-all"
+                    >
+                      {isManualPunchOpen ? "閉じる" : "追加フォームを開く"}
+                    </button>
+                  </div>
+
+                  {isManualPunchOpen && (
+                    <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 pt-2">
+                      <div className="flex flex-col gap-1">
+                        <label className="text-[10px] text-gray-400 font-bold">日付</label>
+                        <input
+                          type="date"
+                          value={manualDate}
+                          onChange={(e) => setManualDate(e.target.value)}
+                          className="bg-white border border-gray-200 rounded-xl px-3 py-2 text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                        />
+                      </div>
+                      <div className="flex flex-col gap-1">
+                        <label className="text-[10px] text-gray-400 font-bold">出勤</label>
+                        <input
+                          type="time"
+                          value={manualClockIn}
+                          onChange={(e) => setManualClockIn(e.target.value)}
+                          className="bg-white border border-gray-200 rounded-xl px-3 py-2 text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                        />
+                      </div>
+                      <div className="flex flex-col gap-1">
+                        <label className="text-[10px] text-gray-400 font-bold">退勤</label>
+                        <input
+                          type="time"
+                          value={manualClockOut}
+                          onChange={(e) => setManualClockOut(e.target.value)}
+                          className="bg-white border border-gray-200 rounded-xl px-3 py-2 text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                        />
+                      </div>
+                      <div className="flex flex-col gap-1">
+                        <label className="text-[10px] text-gray-400 font-bold">メモ</label>
+                        <input
+                          type="text"
+                          value={manualNote}
+                          onChange={(e) => setManualNote(e.target.value)}
+                          placeholder="例：出勤打刻を忘れた"
+                          className="bg-white border border-gray-200 rounded-xl px-3 py-2 text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                        />
+                      </div>
+                      <div className="sm:col-span-4 flex justify-end gap-2">
+                        <button
+                          onClick={() => setIsManualPunchOpen(false)}
+                          className="px-4 py-2 bg-white hover:bg-gray-50 text-gray-500 text-xs font-bold rounded-xl border border-gray-200 transition-all"
+                        >
+                          キャンセル
+                        </button>
+                        <button
+                          onClick={handleAddManualTaikinRecord}
+                          className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl shadow-sm transition-all"
+                        >
+                          打刻漏れを保存
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -1685,35 +1814,123 @@ export default function App() {
                   {taikinHistory.length > 0 ? (
                     taikinHistory.map((item) => {
                       const totalWorkH = (item.workMinutes / 60).toFixed(1);
+                      const recordBreakMinutes = item.breakMinutes ?? breakMinutes;
+                      const isEditing = editingTaikinId === item.id;
+
                       return (
-                        <div key={item.id} className="flex items-center justify-between bg-slate-50/50 hover:bg-slate-50 border border-gray-100 p-3 rounded-xl transition-all">
-                          <div className="flex flex-col gap-0.5">
-                            <span className="text-xs font-bold text-gray-800">{item.date}</span>
-                            <span className="text-[10px] text-gray-400 font-semibold font-mono">
-                              打刻: {item.clockIn} 〜 {item.clockOut} (休憩 {breakMinutes}分)
-                            </span>
-                          </div>
+                        <div key={item.id} className="bg-slate-50/50 hover:bg-slate-50 border border-gray-100 p-3 rounded-xl transition-all">
+                          {isEditing ? (
+                            <div className="flex flex-col gap-3">
+                              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                                <div className="flex flex-col gap-1">
+                                  <label className="text-[9px] text-gray-400 font-bold">日付</label>
+                                  <input
+                                    type="date"
+                                    value={editDate}
+                                    onChange={(e) => setEditDate(e.target.value)}
+                                    className="bg-white border border-gray-200 rounded-lg px-2 py-1.5 text-[11px] font-semibold focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                                  />
+                                </div>
+                                <div className="flex flex-col gap-1">
+                                  <label className="text-[9px] text-gray-400 font-bold">出勤</label>
+                                  <input
+                                    type="time"
+                                    value={editClockIn}
+                                    onChange={(e) => setEditClockIn(e.target.value)}
+                                    className="bg-white border border-gray-200 rounded-lg px-2 py-1.5 text-[11px] font-semibold focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                                  />
+                                </div>
+                                <div className="flex flex-col gap-1">
+                                  <label className="text-[9px] text-gray-400 font-bold">退勤</label>
+                                  <input
+                                    type="time"
+                                    value={editClockOut}
+                                    onChange={(e) => setEditClockOut(e.target.value)}
+                                    className="bg-white border border-gray-200 rounded-lg px-2 py-1.5 text-[11px] font-semibold focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                                  />
+                                </div>
+                              </div>
 
-                          <div className="flex items-center gap-3">
-                            <div className="text-right col-span-1">
-                              <span className="text-xs font-bold text-gray-700 block">実働: {totalWorkH}時間</span>
-                              {item.overtimeMinutes > 0 ? (
-                                <span className="inline-flex items-center text-[9px] font-bold text-rose-600 bg-rose-50 border border-rose-105 px-1.5 py-0.5 rounded-md mt-0.5">
-                                  残業: {Math.floor(item.overtimeMinutes / 60)}h{item.overtimeMinutes % 60}m
-                                </span>
-                              ) : (
-                                <span className="text-[9px] text-gray-400 font-semibold">定時退勤</span>
-                              )}
+                              <input
+                                type="text"
+                                value={editNote}
+                                onChange={(e) => setEditNote(e.target.value)}
+                                placeholder="修正理由メモ（例：ジョブカンの修正申請に合わせて変更）"
+                                className="bg-white border border-gray-200 rounded-lg px-2 py-1.5 text-[11px] font-semibold focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                              />
+
+                              <div className="flex justify-end gap-2">
+                                <button
+                                  onClick={handleCancelEditTaikinRecord}
+                                  className="px-3 py-1.5 bg-white hover:bg-gray-50 text-gray-500 text-[11px] font-bold rounded-lg border border-gray-200 transition-all"
+                                >
+                                  キャンセル
+                                </button>
+                                <button
+                                  onClick={handleSaveEditTaikinRecord}
+                                  className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-[11px] font-bold rounded-lg transition-all"
+                                >
+                                  保存
+                                </button>
+                              </div>
                             </div>
+                          ) : (
+                            <div className="flex items-center justify-between gap-3">
+                              <div className="flex flex-col gap-0.5 min-w-0">
+                                <div className="flex items-center gap-1.5 flex-wrap">
+                                  <span className="text-xs font-bold text-gray-800">{item.date}</span>
+                                  {item.isManual && (
+                                    <span className="px-1.5 py-0.5 bg-amber-50 text-amber-700 border border-amber-100 rounded-md text-[9px] font-bold">手動追加</span>
+                                  )}
+                                  {item.isEdited && (
+                                    <span className="px-1.5 py-0.5 bg-indigo-50 text-indigo-700 border border-indigo-100 rounded-md text-[9px] font-bold">修正済み</span>
+                                  )}
+                                </div>
+                                <span className="text-[10px] text-gray-400 font-semibold font-mono">
+                                  打刻: {item.clockIn} 〜 {item.clockOut} (休憩 {recordBreakMinutes}分)
+                                </span>
+                                {item.isEdited && (item.originalClockIn || item.originalClockOut) && (
+                                  <span className="text-[9px] text-gray-400 font-semibold">
+                                    修正前: {item.originalClockIn || "--:--"} 〜 {item.originalClockOut || "--:--"}
+                                  </span>
+                                )}
+                                {item.note && (
+                                  <span className="text-[9px] text-gray-500 font-medium truncate max-w-[260px]">
+                                    メモ: {item.note}
+                                  </span>
+                                )}
+                              </div>
 
-                            <button
-                              onClick={() => handleDeleteTaikinHistory(item.id)}
-                              className="p-1.5 text-gray-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-all cursor-pointer"
-                              title="記録を削除"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
-                          </div>
+                              <div className="flex items-center gap-2 shrink-0">
+                                <div className="text-right col-span-1">
+                                  <span className="text-xs font-bold text-gray-700 block">実働: {totalWorkH}時間</span>
+                                  {item.overtimeMinutes > 0 ? (
+                                    <span className="inline-flex items-center text-[9px] font-bold text-rose-600 bg-rose-50 border border-rose-105 px-1.5 py-0.5 rounded-md mt-0.5">
+                                      残業: {Math.floor(item.overtimeMinutes / 60)}h{item.overtimeMinutes % 60}m
+                                    </span>
+                                  ) : (
+                                    <span className="text-[9px] text-gray-400 font-semibold">定時退勤</span>
+                                  )}
+                                </div>
+
+                                <button
+                                  onClick={() => handleStartEditTaikinRecord(item)}
+                                  className="p-1.5 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-all cursor-pointer"
+                                  title="記録を修正"
+                                >
+                                  <FileText className="w-3.5 h-3.5" />
+                                </button>
+
+                                <button
+                                  onClick={() => handleDeleteTaikinHistory(item.id)}
+                                  className="p-1.5 text-gray-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-all cursor-pointer"
+                                  title="記録を削除"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                            </div>
+                          )}
                         </div>
                       );
                     })
@@ -1856,7 +2073,7 @@ export default function App() {
                 </div>
 
                 <p className="text-[10px] text-gray-400 leading-relaxed bg-[#F8FAFC] p-3 rounded-xl border border-gray-150">
-                  💡 **統一メリット:** 朝は「MorningTask」でやるべき日課とGoogle予定をまとめて音声朝礼。夕方は「退勤タイマー」でカウントダウンしながら定時退勤を意識し、1日の頑張りとお疲れ様ボイスで毎日を豊かに完結させます。
+                  💡 **統一メリット:** 朝は「MorningTask」でやるべき日課とGoogle予定をまとめて音声朝礼。出退勤タイマーで勤務時間を確認しながら、打刻漏れや修正メモも残せます。
                 </p>
               </div>
             </section>
